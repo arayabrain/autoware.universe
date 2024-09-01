@@ -91,7 +91,7 @@ bool StaticObstacleAvoidanceModule::isExecutionRequested() const
 
   // Check ego is in preferred lane
   updateInfoMarker(avoid_data_);
-  updateDebugMarker(avoid_data_, path_shifter_, debug_data_);
+  updateDebugMarker(BehaviorModuleOutput{}, avoid_data_, path_shifter_, debug_data_);
 
   // there is object that should be avoid. return true.
   if (!!avoid_data_.stop_target_object) {
@@ -1022,16 +1022,24 @@ BehaviorModuleOutput StaticObstacleAvoidanceModule::plan()
 
     constexpr bool is_driving_forward = true;
     constexpr bool egos_lane_is_shifted = true;
-    const auto [new_signal, is_ignore] = planner_data_->getBehaviorTurnSignalInfo(
-      linear_shift_path, path_shifter_.getShiftLines().front(), avoid_data_.current_lanelets,
-      helper_->getEgoShift(), is_driving_forward, egos_lane_is_shifted);
 
-    const auto current_seg_idx = planner_data_->findEgoSegmentIndex(spline_shift_path.path.points);
-    output.turn_signal_info = planner_data_->turn_signal_decider.overwrite_turn_signal(
-      spline_shift_path.path, getEgoPose(), current_seg_idx, original_signal, new_signal,
-      planner_data_->parameters.ego_nearest_dist_threshold,
-      planner_data_->parameters.ego_nearest_yaw_threshold);
-    update_ignore_signal(path_shifter_.getShiftLines().front().id, is_ignore);
+    for (const auto & shift_line : path_shifter_.getShiftLines()) {
+      const auto shift_length = shift_line.start_shift_length - shift_line.end_shift_length;
+      if (std::abs(shift_length) > 0.3) {
+        const auto [new_signal, is_ignore] = planner_data_->getBehaviorTurnSignalInfo(
+          linear_shift_path, shift_line, avoid_data_.current_lanelets, helper_->getEgoShift(),
+          is_driving_forward, egos_lane_is_shifted);
+
+        const auto current_seg_idx =
+          planner_data_->findEgoSegmentIndex(spline_shift_path.path.points);
+        output.turn_signal_info = planner_data_->turn_signal_decider.overwrite_turn_signal(
+          spline_shift_path.path, getEgoPose(), current_seg_idx, original_signal, new_signal,
+          planner_data_->parameters.ego_nearest_dist_threshold,
+          planner_data_->parameters.ego_nearest_yaw_threshold);
+        update_ignore_signal(shift_line.id, is_ignore);
+        break;
+      }
+    }
   }
 
   // sparse resampling for computational cost
@@ -1044,7 +1052,7 @@ BehaviorModuleOutput StaticObstacleAvoidanceModule::plan()
   {
     updateEgoBehavior(data, spline_shift_path);
     updateInfoMarker(avoid_data_);
-    updateDebugMarker(avoid_data_, path_shifter_, debug_data_);
+    updateDebugMarker(output, avoid_data_, path_shifter_, debug_data_);
   }
 
   if (isDrivingSameLane(helper_->getPreviousDrivingLanes(), data.current_lanelets)) {
@@ -1490,12 +1498,13 @@ void StaticObstacleAvoidanceModule::updateInfoMarker(const AvoidancePlanningData
 }
 
 void StaticObstacleAvoidanceModule::updateDebugMarker(
-  const AvoidancePlanningData & data, const PathShifter & shifter, const DebugData & debug) const
+  const BehaviorModuleOutput & output, const AvoidancePlanningData & data,
+  const PathShifter & shifter, const DebugData & debug) const
 {
   universe_utils::ScopedTimeTrack st(__func__, *time_keeper_);
   debug_marker_.markers.clear();
-  debug_marker_ =
-    utils::static_obstacle_avoidance::createDebugMarkerArray(data, shifter, debug, parameters_);
+  debug_marker_ = utils::static_obstacle_avoidance::createDebugMarkerArray(
+    output, data, shifter, debug, parameters_);
 }
 
 void StaticObstacleAvoidanceModule::updateAvoidanceDebugData(
