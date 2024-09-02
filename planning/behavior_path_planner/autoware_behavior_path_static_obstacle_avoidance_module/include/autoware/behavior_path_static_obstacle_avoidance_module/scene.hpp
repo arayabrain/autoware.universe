@@ -369,6 +369,9 @@ private:
    */
   bool isSafePath(ShiftedPath & shifted_path, DebugData & debug) const;
 
+  auto getTurnSignal(const ShiftedPath & spline_shift_path, const ShiftedPath & linear_shift_path)
+    -> TurnSignalInfo;
+
   // post process
 
   /**
