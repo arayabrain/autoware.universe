@@ -975,17 +975,16 @@ auto StaticObstacleAvoidanceModule::getTurnSignal(
     return getPreviousModuleOutput().turn_signal_info;
   }
 
-  if (is_ignore_signal(shift_lines.front().id)) {
-    return getPreviousModuleOutput().turn_signal_info;
-  }
-
   if (is_large_deviation(spline_shift_path.path)) {
     return getPreviousModuleOutput().turn_signal_info;
   }
 
-  const auto itr = std::remove_if(shift_lines.begin(), shift_lines.end(), [](const auto & s) {
-    return std::abs(s.start_shift_length - s.end_shift_length) < 0.3;
-  });
+  const auto itr =
+    std::remove_if(shift_lines.begin(), shift_lines.end(), [&, this](const auto & s) {
+      const auto threshold = planner_data_->parameters.turn_signal_shift_length_threshold;
+      return std::abs(s.start_shift_length - s.end_shift_length) < threshold ||
+             is_ignore_signal(s.id);
+    });
   shift_lines.erase(itr, shift_lines.end());
 
   if (shift_lines.empty()) {
@@ -993,35 +992,45 @@ auto StaticObstacleAvoidanceModule::getTurnSignal(
   }
 
   const auto target_shift_line = [&]() {
-    for (size_t i = 0; i < shift_lines.size() - 1; i++) {
-      const auto & s1 = shift_lines.at(i);
-      const auto & s2 = shift_lines.at(i + 1);
+    const auto & s1 = shift_lines.front();
 
-      const auto & threshold = planner_data_->parameters.turn_signal_shift_length_threshold;
-      if (std::abs(s1.start_shift_length - s1.end_shift_length) < threshold) {
-        if (std::abs(s2.start_shift_length - s2.end_shift_length) > threshold) {
-          return s2;
-        }
+    for (size_t i = 1; i < shift_lines.size(); i++) {
+      const auto & s2 = shift_lines.at(i);
 
+      const auto s1_relative_length = s1.start_shift_length - s1.end_shift_length;
+      const auto s2_relative_length = s2.start_shift_length - s2.end_shift_length;
+
+      // same side shift
+      if (s1_relative_length > 0.0 && s2_relative_length > 0.0) {
         continue;
       }
 
+      // same side shift
+      if (s1_relative_length < 0.0 && s2_relative_length < 0.0) {
+        continue;
+      }
+
+      // different side shift
       const auto & points = path_shifter_.getReferencePath().points;
       const size_t idx = planner_data_->findEgoIndex(points);
 
+      // output turn signal for near shift line.
       if (calcSignedArcLength(points, idx, s1.start_idx) > 0.0) {
         return s1;
       }
 
-      const auto prepare_distance = helper_->getNominalPrepareDistance();
-      if (calcSignedArcLength(points, idx, s2.start_idx) < prepare_distance) {
+      // output turn signal for far shift line.
+      if (
+        calcSignedArcLength(points, idx, s2.start_idx) <
+        getEgoSpeed() * parameters_->max_prepare_time) {
         return s2;
       }
 
+      // output turn signal for near shift line.
       return s1;
     }
 
-    return shift_lines.front();
+    return s1;
   }();
 
   const auto original_signal = getPreviousModuleOutput().turn_signal_info;
